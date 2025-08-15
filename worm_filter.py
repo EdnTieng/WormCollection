@@ -2,6 +2,7 @@ import os
 import time
 import json
 import requests
+from itertools import cycle
 
 # -------------------
 # CONFIGURATION
@@ -10,10 +11,17 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HASH_LIST_DIR = os.path.join(BASE_DIR, "VirusShare_Hashes")
 CACHE_FILE = os.path.join(BASE_DIR, "vt_cache.json")
 WORM_HASHES_FILE = os.path.join(BASE_DIR, "worm_hashes.txt")
-API_KEY = "1c6215b24d3f8d4b61b2e390807656b519d1e3f83990c1da6581af1527f47c2d"
-API_URL = "https://www.virustotal.com/api/v3/files/"
 
-API_DELAY = 16  # seconds (free API key limit: 4 requests/minute)
+# Add all your VT API keys here
+API_KEYS = [
+    "API_KEY_1",
+    "API_KEY_2",
+    "API_KEY_3"
+]
+API_KEY_CYCLE = cycle(API_KEYS)  # Round robin iterator
+
+API_URL = "https://www.virustotal.com/api/v3/files/"
+API_DELAY = 16  # Free API limit: 4 requests/minute per key
 
 worm_aliases = {
     "bagle": ["bagle", "beagle", "bagel"],
@@ -41,24 +49,25 @@ family_hashes = {family: set() for family in worm_aliases}
 # VIRUSTOTAL LOOKUP
 # -------------------
 def is_worm(md5_hash):
-    # ✅ If cached, skip API request and delay
     if md5_hash in cache:
         result = cache[md5_hash]
         print(f"[CACHE] {md5_hash} → {result['is_worm']} ({len(result['detections'])} detections)")
         return result["is_worm"], result.get("family")
 
-    # ⏳ Delay happens only when we actually query VirusTotal
+    # Get the next API key in the round robin
+    current_api_key = next(API_KEY_CYCLE)
+
+    print(f"[VT QUERY] Using API key ending with ...{current_api_key[-4:]}")
     print(f"[VT QUERY] Waiting {API_DELAY}s before querying VirusTotal...")
     time.sleep(API_DELAY)
 
-    headers = {"x-apikey": API_KEY}
+    headers = {"x-apikey": current_api_key}
     response = requests.get(API_URL + md5_hash, headers=headers)
 
     detections = []
     is_worm_flag = False
     family_detected = None
 
-    # Keywords
     generic_worm_keywords = ["worm"]
 
     if response.status_code == 200:
@@ -71,21 +80,15 @@ def is_worm(md5_hash):
         except KeyError:
             pass
 
-        # Check specific worm families
         for family, aliases in worm_aliases.items():
-            if any(
-                any(alias in d.lower() for alias in aliases)
-                for d in detections
-            ):
+            if any(any(alias in d.lower() for alias in aliases) for d in detections):
                 is_worm_flag = True
                 family_detected = family
                 break
 
-        # If not a specific family, check for generic worm detection
         if not is_worm_flag:
             worm_vendors = sum(
-                1 for d in detections
-                if any(keyword in d.lower() for keyword in generic_worm_keywords)
+                1 for d in detections if any(keyword in d.lower() for keyword in generic_worm_keywords)
             )
             is_worm_flag = worm_vendors >= 3
 
@@ -94,7 +97,6 @@ def is_worm(md5_hash):
     else:
         print(f"[!] Error {response.status_code} for hash {md5_hash}")
 
-    # ✅ Store result in cache regardless of worm status
     cache[md5_hash] = {
         "is_worm": is_worm_flag,
         "detections": detections,
@@ -132,16 +134,13 @@ def process_hash_lists():
                         else:
                             print(f"[-] Not a worm: {md5_hash}")
 
-    # Save cache
     with open(CACHE_FILE, "w") as f:
         json.dump(cache, f, indent=2)
 
-    # Save all worm hashes
     with open(WORM_HASHES_FILE, "w") as f:
         for h in sorted(worm_hashes):
             f.write(h + "\n")
 
-    # Save family-specific worm hashes
     for family, hashes in family_hashes.items():
         if hashes:
             family_file = os.path.join(BASE_DIR, f"{family.replace(' ', '_')}_hashes.txt")
