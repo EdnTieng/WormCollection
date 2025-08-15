@@ -42,8 +42,19 @@ else:
     print(f"[!] No cache file found at: {CACHE_FILE}. Starting fresh.")
     cache = {}
 
+# Load already saved worm hashes so we can append instead of overwrite
 worm_hashes = set()
+if os.path.exists(WORM_HASHES_FILE):
+    with open(WORM_HASHES_FILE, "r") as f:
+        worm_hashes.update(line.strip() for line in f if line.strip())
+
+# Load per-family hash files
 family_hashes = {family: set() for family in worm_aliases}
+for family in worm_aliases:
+    family_file = os.path.join(BASE_DIR, f"{family.replace(' ', '_')}_hashes.txt")
+    if os.path.exists(family_file):
+        with open(family_file, "r") as f:
+            family_hashes[family].update(line.strip() for line in f if line.strip())
 
 # -------------------
 # VIRUSTOTAL LOOKUP
@@ -80,12 +91,14 @@ def is_worm(md5_hash):
         except KeyError:
             pass
 
+        # Match worm family aliases
         for family, aliases in worm_aliases.items():
             if any(any(alias in d.lower() for alias in aliases) for d in detections):
                 is_worm_flag = True
                 family_detected = family
                 break
 
+        # Generic worm detection
         if not is_worm_flag:
             worm_vendors = sum(
                 1 for d in detections if any(keyword in d.lower() for keyword in generic_worm_keywords)
@@ -97,6 +110,7 @@ def is_worm(md5_hash):
     else:
         print(f"[!] Error {response.status_code} for hash {md5_hash}")
 
+    # Cache result
     cache[md5_hash] = {
         "is_worm": is_worm_flag,
         "detections": detections,
@@ -123,6 +137,9 @@ def process_hash_lists():
                 for line in f:
                     md5_hash = line.strip().lower()
                     if len(md5_hash) == 32 and md5_hash.isalnum():
+                        if md5_hash in worm_hashes:
+                            print(f"[SKIP] Already saved worm hash: {md5_hash}")
+                            continue
                         print(f"[+] Checking hash: {md5_hash}")
                         is_worm_flag, family_detected = is_worm(md5_hash)
                         if is_worm_flag:
@@ -134,13 +151,16 @@ def process_hash_lists():
                         else:
                             print(f"[-] Not a worm: {md5_hash}")
 
+    # Save cache
     with open(CACHE_FILE, "w") as f:
         json.dump(cache, f, indent=2)
 
+    # Append new worm hashes
     with open(WORM_HASHES_FILE, "w") as f:
         for h in sorted(worm_hashes):
             f.write(h + "\n")
 
+    # Append per-family hashes
     for family, hashes in family_hashes.items():
         if hashes:
             family_file = os.path.join(BASE_DIR, f"{family.replace(' ', '_')}_hashes.txt")
