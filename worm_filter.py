@@ -21,7 +21,7 @@ API_KEYS = [
 API_KEY_CYCLE = cycle(API_KEYS)  # Round robin iterator
 
 API_URL = "https://www.virustotal.com/api/v3/files/"
-API_DELAY = 0  # Free API limit: 4 requests/minute per key
+API_DELAY = 16  # Free API limit: 4 requests/minute per key
 
 worm_aliases = {
     "bagle": ["bagle", "beagle", "bagel"],
@@ -206,3 +206,4 @@ def save_results():
 
 if __name__ == "__main__":
     process_hash_lists()
+
