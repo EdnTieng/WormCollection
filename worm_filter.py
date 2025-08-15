@@ -14,14 +14,14 @@ WORM_HASHES_FILE = os.path.join(BASE_DIR, "worm_hashes.txt")
 
 # Add all your VT API keys here
 API_KEYS = [
-    "API_KEY_1",
-    "API_KEY_2",
-    "API_KEY_3"
+    "",
+    "",
+    ""
 ]
 API_KEY_CYCLE = cycle(API_KEYS)  # Round robin iterator
 
 API_URL = "https://www.virustotal.com/api/v3/files/"
-API_DELAY = 16  # Free API limit: 4 requests/minute per key
+API_DELAY = 0  # Free API limit: 4 requests/minute per key
 
 worm_aliases = {
     "bagle": ["bagle", "beagle", "bagel"],
@@ -129,19 +129,43 @@ def process_hash_lists():
         print("[!] Please put your VirusShare hash list text files inside this folder.")
         return
 
+    checked_count = 0
+    max_checks = 1500  # Limit for this run
+
     for file in os.listdir(HASH_LIST_DIR):
         path = os.path.join(HASH_LIST_DIR, file)
         if os.path.isfile(path) and file.lower().endswith(".txt"):
             print(f"[+] Processing file: {path}")
             with open(path, "r", errors="ignore") as f:
                 for line in f:
+                    if checked_count >= max_checks:
+                        print(f"[!] Reached {max_checks} hash limit for this run.")
+                        save_results()
+                        return
+
                     md5_hash = line.strip().lower()
                     if len(md5_hash) == 32 and md5_hash.isalnum():
+                        
+                        # Skip already saved worm hashes
                         if md5_hash in worm_hashes:
                             print(f"[SKIP] Already saved worm hash: {md5_hash}")
                             continue
+                        
+                        # Skip cached hashes without VT query
+                        if md5_hash in cache:
+                            cached_data = cache[md5_hash]
+                            print(f"[CACHE] Skipped cached hash: {md5_hash}")
+                            if cached_data["is_worm"]:
+                                worm_hashes.add(md5_hash)
+                                if cached_data.get("family"):
+                                    family_hashes[cached_data["family"]].add(md5_hash)
+                            continue
+                        
+                        # Not cached → query VirusTotal
                         print(f"[+] Checking hash: {md5_hash}")
                         is_worm_flag, family_detected = is_worm(md5_hash)
+                        checked_count += 1  # Only increment after VT query
+                        print(checked_count, "hashes checked so far...")
                         if is_worm_flag:
                             worm_hashes.add(md5_hash)
                             print(f"[+] Worm found: {md5_hash}")
@@ -151,6 +175,12 @@ def process_hash_lists():
                         else:
                             print(f"[-] Not a worm: {md5_hash}")
 
+    save_results()
+
+# -------------------
+# SAVE RESULTS
+# -------------------
+def save_results():
     # Save cache
     with open(CACHE_FILE, "w") as f:
         json.dump(cache, f, indent=2)
@@ -172,6 +202,7 @@ def process_hash_lists():
     print(f"\n[✓] Finished! Found {len(worm_hashes)} total worm hashes.")
     for family, hashes in family_hashes.items():
         print(f"    {family.title()}: {len(hashes)}")
+
 
 if __name__ == "__main__":
     process_hash_lists()
